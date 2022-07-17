@@ -1,0 +1,15 @@
+{
+  "my-vb-machines": "My Virtual Machines",
+  "my-disks": "My Disks",
+  "vb-machines": "Virtual Machines",
+  "virtual-box-explorer": "Virtual Machines",
+  "extension.description": "Extension allows to manage your Virtual Machines right from Visual Studio Code",
+  "kymano-extension.runVM": "Start a new Virtual Machine",
+  "kymano-extension.runMyVM": "Start the Virtual Machine",
+  "kymano-extension.runHeadlessVM": "Start the Virtual Machine (Headless)",
+  "kymano-extension.saveStateVM": "Stop the Virtual Machine (State will be saved)",
+  "kymano-extension.stopAllVms": "Stop all Virtual Machines (State will be saved)",
+  "kymano-extension.refreshVMs": "Refresh Virtual Machines Explorer",
+  "kymano-extension.poweOffAllVms": "Power off all Virtual Machines (State will be lost)",
+  "kymano-extension.poweroffVm": "Power off the Virtual Machine (State will be lost)"
+}

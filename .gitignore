@@ -1,0 +1,21 @@
+# Logs
+logs
+*.log
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Output
+out
+bin
+obj
+testWorkspace
+test-results.xml
+dist
+stats.json
+.vscode-test
+*.vsix
