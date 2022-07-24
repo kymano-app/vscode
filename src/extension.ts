@@ -11,9 +11,10 @@ import {
   shiftGuestFsQueue,
   shiftMessagesQueue,
 } from "kymano";
-import { mounted } from "kymano/dist/global";
+import { mounted, shiftQemuImgConvertingQueue } from "kymano/dist/global";
 import * as vscode from "vscode";
 import { DiskTreeItem } from "./diskTreeitem";
+import { CantConvertDiskException } from "./Exceptions/CantConvertDiskException";
 import { pids } from "./global";
 import { MyDisksProvider } from "./MyDisksProvider";
 import { runGuestFs } from "./services";
@@ -31,6 +32,7 @@ import {
 } from "./utils";
 import { MyVirtualMachinesProvider, VirtualMachinesProvider } from "./vmsProvider";
 import { VirtualMachineTreeItem } from "./vmTreeitem";
+import path = require("path");
 
 const db = require("better-sqlite3")(getUserDataPath() + "/sqlite3.db", {
   verbose: console.log,
@@ -57,26 +59,26 @@ const kymano = new Kymano(dataSource, new QemuCommands());
       await execInGuestfs("kill `pidof find` 2>/dev/null", "worker2");
       await execInGuestfs("/bin/unmount 2>/dev/null", "worker1");
       const result2 = await delDrives();
-      console.log("result::::::", result2);
-      
+      console.log(`src/extension.ts:60 result2`, result2);
+
       await addDriveViaMonitor(`${getUserDataPath()}/user_layers/disk/${command.param}`);
       await new Promise((resolve) => setTimeout(resolve, 1 * 1000));
       const result = await execInGuestfs("/bin/guestfs", "worker1");
-      mounted[command.param] = "done";
-      console.log("result::::::", result);
+      mounted[command.param] = { status: "done", result };
+      console.log(`src/extension.ts:65 result`, result);
     }
     if (command && command.name === "addNewVmDriveToGuestFs") {
       await execInGuestfs("kill `pidof ack` 2>/dev/null", "worker2");
       await execInGuestfs("kill `pidof find` 2>/dev/null", "worker2");
       await execInGuestfs("/bin/unmount 2>/dev/null", "worker1");
       const result2 = await delDrives();
-      console.log("result::::::", result2);
+      console.log(`src/extension.ts:72 result2`, result2);
 
       await addDriveViaMonitor(`${getUserDataPath()}/user_layers/vm/${command.param}`);
       await new Promise((resolve) => setTimeout(resolve, 1 * 1000));
       const result = await execInGuestfs("/bin/guestfs", "worker1");
-      mounted[command.param] = "done";
-      console.log("result::::::", result);
+      mounted[command.param] = { status: "done", result };
+      console.log(`src/extension.ts:79 result`, result);
     }
     if (command && command.name === "unmount") {
       console.log("Unmount all");
@@ -84,14 +86,14 @@ const kymano = new Kymano(dataSource, new QemuCommands());
       await execInGuestfs("kill `pidof find` 2>/dev/null", "worker2");
       await execInGuestfs("/bin/unmount 2>/dev/null", "worker1");
       const result2 = await delDrives();
-      console.log("result2:::::", result2);
+      console.log(`src/extension.ts:87 result2`, result2);
     }
     if (command && command.name === "getIp") {
       const resultIp = await execInGuestfs(
         `/sbin/ifconfig eth0 | grep 'inet addr' | cut -d: -f2 | awk '{printf( "%s%c", $1, 0)}'`,
         "worker1"
       );
-      console.log("resultIp::::::", resultIp);
+      console.log(`src/extension.ts:94 resultIp`, resultIp);
       if (resultIp && resultIp[0].length < 7) {
         setIp(resultIp[1]);
       } else {
@@ -134,9 +136,63 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       console.log(`myDisks.open`, vmTreeItem);
       myDisksProvider.open(vmTreeItem);
     }),
-    vscode.commands.registerCommand("myDisks.upload", async (): Promise<void> => {
-      console.log(`myDisks.upload`);
-      myDisksProvider.upload();
+    vscode.commands.registerCommand("myDisks.upload", async (vmTreeItem?: DiskTreeItem): Promise<void> => {
+      if (vmTreeItem) {
+        vscode.window.showOpenDialog().then(async (fileInfos) => {
+          console.log(`src/MyDisksProvider.ts:58 fileInfos`, fileInfos);
+          if (!fileInfos) {
+            return;
+          }
+
+          vmTreeItem.id = "10000";
+          vmTreeItem.iconPath = new (vscode.ThemeIcon as any)("gear~spin");
+          vmTreeItem.label = "loading";
+          vmTreeItem.description = "importing";
+          vmTreeItem.tooltip = "importing";
+          vmTreeItem.command = undefined;
+          myDisksProvider.refreshOneWithoutReveal(vmTreeItem);
+
+          kymano
+            .importDisk(fileInfos[0].path, path.basename(fileInfos[0].path))
+            .then(() => {
+              //myDisksProvider.refresh();
+              //vscode.window.showInformationMessage(`Done`);
+            })
+            .catch((e) => {
+              console.log(`src/MyDisksProvider.ts:79 path`, e);
+              CantConvertDiskException(fileInfos[0].path, e.message);
+            });
+
+          await (async function loop() {
+            await setTimeout(async function () {
+              const qemuImgConvertingProcess = shiftQemuImgConvertingQueue();
+              console.log("qemuImgConvertingProcess::::::", qemuImgConvertingProcess);
+
+              if (qemuImgConvertingProcess && qemuImgConvertingProcess === "end") {
+                console.log(`src/MyDisksProvider.ts:161 refresh`);
+                myDisksProvider.refresh();
+                //importing = null;
+                vscode.window.showInformationMessage(`Done`);
+                return;
+              }
+              if (qemuImgConvertingProcess) {
+                console.log(`refreshOneWithoutReveal`);
+                vmTreeItem.id = "10000";
+                vmTreeItem.iconPath = new (vscode.ThemeIcon as any)("gear~spin");
+                vmTreeItem.label = qemuImgConvertingProcess + "%";
+                vmTreeItem.description = "importing";
+                vmTreeItem.tooltip = "importing";
+                vmTreeItem.command = undefined;
+                myDisksProvider.refreshOneWithoutReveal(vmTreeItem);
+              }
+              await loop();
+            }, 20);
+          })();
+          console.log(`src/extension.ts:137 vmTreeItem`, vmTreeItem);
+          //vmTreeItem.label = "121";
+          myDisksProvider.refreshOneWithoutReveal(vmTreeItem);
+        });
+      }
     }),
     vscode.commands.registerCommand("kymano-extension.click", async (vmTreeItem?: DiskTreeItem): Promise<void> => {
       //if (vmTreeItem) {

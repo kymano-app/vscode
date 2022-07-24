@@ -269,6 +269,7 @@
     "isbinaryfile": "^5.0.0",
     "kymano": "file:../kymano",
     "ssh2-sftp-client": "^9.0.1",
+    "systeminformation": "^5.12.1",
     "vscode-nls": "^5.0.0"
   }
 }

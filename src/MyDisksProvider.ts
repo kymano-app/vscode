@@ -1,13 +1,16 @@
 import { DataSource, getUserDataPath, Kymano, QemuCommands } from "kymano";
-import { mounted } from "kymano/dist/global";
+import { mounted, shiftQemuImgConvertingQueue } from "kymano/dist/global";
+import path = require("path");
 import * as vscode from "vscode";
 import { DiskTreeItem } from "./diskTreeitem";
+import { CantConvertDiskException } from "./Exceptions/CantConvertDiskException";
 import { SFtpNode } from "./SFtpNodeInterface";
 import { SFtpService } from "./SFtpService";
 import { getMyDisks } from "./utils";
 const fs = require("fs");
 
 var selected;
+var importing = null;
 
 const db = require("better-sqlite3")(getUserDataPath() + "/sqlite3.db", {
   verbose: console.log,
@@ -40,43 +43,40 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     this._onDidChangeTreeData.fire(item);
   }
 
+  refreshOneWithoutReveal(item?: DiskTreeItem): void {
+    console.log(`src/MyDisksProvider.ts:17 refreshOneWithoutReveal`);
+    this._onDidChangeTreeData.fire(item);
+  }
+
   open(item?: DiskTreeItem): void {
     console.log(`open`, item);
     //item?.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
 
     if (selected && selected !== item) {
       if (selected.myConfigId) {
-        mounted[`${selected.myConfigId}-${selected.name}`] = "no";
+        mounted[`${selected.myConfigId}-${selected.name}`] = { status: "no" };
       } else {
-        mounted[`${selected.diskId}`] = "no";
+        mounted[`${selected.diskId}`] = { status: "no" };
       }
       this._onDidChangeTreeData.fire(selected);
       vscode.commands.executeCommand("workbench.actions.treeView.my-disks.collapseAll");
       console.log(`src/MyDisksProvider.ts:54 collapseAll`);
     }
     if (selected !== item) {
+      this.model.connect().then(() => {
+        console.log(`connect:::::::::`);
+        item.loading = undefined;
+        this.refreshOne(item);
+      });
+
+      item.icon = "loading~spin";
+      item.loading = true;
       this.refreshOne(item);
     }
     if (selected === item && item?.collapsibleState === vscode.TreeItemCollapsibleState.Collapsed) {
       this.view.reveal(item, { focus: true, select: true, expand: true });
     }
     selected = item;
-  }
-
-  upload(): void {
-    vscode.window.showOpenDialog().then((fileInfos) => {
-      console.log(`src/MyDisksProvider.ts:58 fileInfos`, fileInfos);
-      if (!fileInfos) {
-        return;
-      }
-      kymano.importDisk(fileInfos[0].path, "new VM2").then(() => {
-        this.refresh();
-        vscode.window.showInformationMessage(`Done`);
-      });
-
-      //fs.writeFileSync(fileInfos.path, data);
-      //vscode.window.showInformationMessage(`Saved to ${fileInfos.path}`);
-    });
   }
 
   // resolveTreeItem?(
@@ -98,6 +98,9 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     if (!element) {
       return element;
     } else if (element.vmName) {
+      // if (element.icon) {
+      //   element.iconPath = new (vscode.ThemeIcon as any)(element.icon);
+      // }
       return element;
     }
     console.log(`MyDisksProvider getTreeItem resource`, element);
@@ -113,6 +116,7 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
           },
       tooltip: element.tooltip,
     };
+
     return item;
   }
 
@@ -124,22 +128,27 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     if (selected && element && element.command && element !== selected) {
       return undefined;
     }
+    if (element && element.loading) {
+      return;
+    }
 
     if (!element) {
       return getMyDisks()
         .then((disks) => {
           let disks_ = [];
+          console.log(`src/MyDisksProvider.ts:150 importing`, importing);
+          const diskUpload = new DiskTreeItem({
+            id: "9999",
+            name: "Import from VirtualBox, Parallels, VMware ...",
+            vmName: "-",
+            icon: "add",
+            notCollapsed: true,
+          });
+          diskUpload.command = { command: "myDisks.upload", arguments: [diskUpload], title: "Open" };
+
+          disks_.push(diskUpload);
           disks_ = [...disks_, ...disks.map((disk) => new DiskTreeItem(disk))];
-          disks_.push(
-            new DiskTreeItem({
-              id: "9999",
-              name: "Import from VirtualBox, Parallels, VMware ...",
-              vmName: "-",
-              icon: "add",
-              notCollapsed: true,
-              command: { command: "myDisks.upload", arguments: [], title: "Open" },
-            })
-          );
+
           return disks_;
         })
         .catch((err) => {

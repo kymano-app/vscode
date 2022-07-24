@@ -6,11 +6,14 @@ export class DiskTreeItem extends vscode.TreeItem {
   name: string;
   myConfigId?: number;
   diskId?: number;
+  extension?: string;
+  loading: any;
   constructor(public readonly disk: Disk) {
     super(disk.name);
 
     this.id = disk.id;
     this.myConfigId = disk.myConfigId;
+    this.extension = disk.extension;
     this.diskId = disk.diskId;
     this.description = `(${disk.vmName})`;
     if (disk.icon) {
@@ -35,6 +38,9 @@ export class DiskTreeItem extends vscode.TreeItem {
         arguments: [newTree],
         title: "Open",
       };
+    }
+    if (disk.loading) {
+      this.loading = disk.loading;
     }
   }
 }

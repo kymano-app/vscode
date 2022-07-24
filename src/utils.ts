@@ -10,14 +10,16 @@ export interface VirtualMachine {
 }
 
 export interface Disk {
+  loading?: any;
   id: string;
   myConfigId?: number;
+  extension?: string;
   diskId?: number;
   name: string;
   vmName: string;
   icon?: string;
   notCollapsed?: boolean;
-  command: {};
+  command?: {};
 }
 
 export const isRunning = false;
@@ -72,6 +74,7 @@ export function getMyDisks(): Promise<VirtualMachine[]> {
           id: `disk${vmDisks.id}`,
           diskId: `${vmDisks.id}`,
           name: `${vmDisks.name}`,
+          extension: `${vmDisks.extension}`,
           vmName: `disk`,
         });
       });

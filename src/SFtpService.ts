@@ -3,6 +3,8 @@ import { mounted } from "kymano/dist/global";
 import { basename } from "path";
 import * as vscode from "vscode";
 import { DiskTreeItem } from "./diskTreeitem";
+import { CantConnectDiskException } from "./Exceptions/CantConnectDiskException";
+import { CantConnectToSftpHostException } from "./Exceptions/CantConnectToSftpHostException";
 import { SFtpNode } from "./SFtpNodeInterface";
 let Client = require("ssh2-sftp-client");
 const fs = require("fs");
@@ -13,26 +15,36 @@ export class SFtpService {
   constructor(readonly host: string) {}
 
   public connect(): Thenable<Client> {
-    return new Promise((c, e) => {
-      const client = new Client();
+    return new Promise(async (c, e) => {
+      const client = await new Client();
 
       console.log(`src/SFtpService.ts:19 host`, this.host);
-      client
-        .connect({
-          host: this.host,
-          port: 22,
-          username: "root",
-          password: "root",
-          retries: 50,
-          readyTimeout: 1000,
-          retry_minTimeout: 500,
-          retry_factor: 1,
-        })
-        .then(() => c(client))
-        .catch((error) => {
-          console.log(`src/SFtpService.ts:31 conn error`, error);
-          e(null);
-        });
+      let i = 0;
+      while (true) {
+        i++;
+        try {
+          await client.connect({
+            host: this.host,
+            port: 22,
+            username: "root",
+            password: "root",
+            retries: 50,
+            readyTimeout: 1000,
+            retry_minTimeout: 500,
+            retry_factor: 1,
+          });
+          break;
+        } catch (err) {
+          console.log(`src/SFtpService.ts:29 while (true)`, err);
+          await sleep(1);
+          if (i > 30) {
+            CantConnectToSftpHostException(this.host);
+
+            break;
+          }
+        }
+      }
+      c(client);
     });
   }
 
@@ -85,11 +97,29 @@ export class SFtpService {
                   if (i > 60) {
                     console.log(`src/SFtpService.ts:48 !!!resolve`, i, `${disk}`, mounted);
                     resolve();
-                  } else if (mounted[`${mountedKey}`] !== "done") {
+                  } else if (
+                    !mounted[`${mountedKey}`] ||
+                    (mounted[`${mountedKey}`] && mounted[`${mountedKey}`].status !== "done")
+                  ) {
                     myLoop(i);
                   } else {
+                    const result = mounted[`${mountedKey}`];
                     console.log(`src/SFtpService.ts:48 resolve`, i, `${disk}`, mounted);
-                    mounted[`${mountedKey}`] = "no";
+                    console.log(`src/SFtpService.ts:48 resolve`, result);
+                    if (result.result && result.result[0]) {
+                      try {
+                        let jsonResponse = JSON.parse(result.result[0]);
+                        console.log(`jsonResponse`, jsonResponse);
+                        if (jsonResponse.error) {
+                          CantConnectDiskException(jsonResponse.message, disk);
+                        } else if (jsonResponse.result !== "mounted") {
+                          CantConnectDiskException("", disk);
+                        }
+                      } catch (err) {
+                        console.log(`src/SFtpService.ts:115 JSON.parse`, result.result[0]);
+                      }
+                    }
+                    mounted[`${mountedKey}`] = { status: "no" };
                     resolve();
                   }
                 }, 500);
