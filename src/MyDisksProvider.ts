@@ -1,22 +1,16 @@
 import { DataSource, getUserDataPath, Kymano, QemuCommands } from "kymano";
-import { mounted, shiftQemuImgConvertingQueue } from "kymano/dist/global";
-import path = require("path");
+import { mounted } from "kymano/dist/global";
 import * as vscode from "vscode";
 import { DiskTreeItem } from "./diskTreeitem";
-import { CantConvertDiskException } from "./Exceptions/CantConvertDiskException";
 import { SFtpNode } from "./SFtpNodeInterface";
 import { SFtpService } from "./SFtpService";
-import { getMyDisks } from "./utils";
+import { KymanoAdapter } from "./kymanoAdapter";
+import path = require("path");
 const fs = require("fs");
 
 var selected;
 var importing = null;
-
-const db = require("better-sqlite3")(getUserDataPath() + "/sqlite3.db", {
-  verbose: console.log,
-});
-const dataSource = new DataSource(db);
-const kymano = new Kymano(dataSource, new QemuCommands());
+var loadingQemuImg = true;
 
 export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
   private _onDidChangeTreeData: vscode.EventEmitter<DiskTreeItem | undefined> = new vscode.EventEmitter<
@@ -24,7 +18,7 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   >();
   view: vscode.TreeView<T>;
 
-  constructor(private readonly model: SFtpService) {
+  constructor(private readonly model: SFtpService, private readonly kymanoAdapter: KymanoAdapter) {
     this.view = vscode.window.createTreeView("my-disks", {
       treeDataProvider: this,
     });
@@ -34,6 +28,7 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
 
   refresh(): void {
     console.log(`src/MyDisksProvider.ts:17 refreshALL`);
+    vscode.commands.executeCommand("workbench.actions.treeView.my-disks.collapseAll");
     this._onDidChangeTreeData.fire();
   }
 
@@ -65,12 +60,13 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     if (selected !== item) {
       this.model.connect().then(() => {
         console.log(`connect:::::::::`);
-        item.loading = undefined;
+        item.icon = "folder";
+        item.waitingForSshConnection = undefined;
         this.refreshOne(item);
       });
 
       item.icon = "loading~spin";
-      item.loading = true;
+      item.waitingForSshConnection = true;
       this.refreshOne(item);
     }
     if (selected === item && item?.collapsibleState === vscode.TreeItemCollapsibleState.Collapsed) {
@@ -95,12 +91,12 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem | Thenable<vscode.TreeItem> {
     console.log(`MyDisksProvider getTreeItem`, element);
-    if (!element) {
+    if (!element || element.loadingQemuImg) {
       return element;
     } else if (element.vmName) {
-      // if (element.icon) {
-      //   element.iconPath = new (vscode.ThemeIcon as any)(element.icon);
-      // }
+      if (element.icon) {
+        element.iconPath = new (vscode.ThemeIcon as any)(element.icon);
+      }
       return element;
     }
     console.log(`MyDisksProvider getTreeItem resource`, element);
@@ -128,33 +124,47 @@ export class MyDisksProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     if (selected && element && element.command && element !== selected) {
       return undefined;
     }
-    if (element && element.loading) {
+    if (element && element.waitingForSshConnection) {
       return;
     }
 
-    if (!element) {
-      return getMyDisks()
-        .then((disks) => {
-          let disks_ = [];
-          console.log(`src/MyDisksProvider.ts:150 importing`, importing);
-          const diskUpload = new DiskTreeItem({
-            id: "9999",
-            name: "Import from VirtualBox, Parallels, VMware ...",
-            vmName: "-",
-            icon: "add",
-            notCollapsed: true,
+    if (!element && loadingQemuImg) {
+      new Promise(async (resolve, reject) => {
+        const disks = await this.kymanoAdapter.getMyDisks()
+          .then((disks) => {
+            let disks_ = [];
+            console.log(`src/MyDisksProvider.ts:150 importing`, importing);
+            const diskUpload = new DiskTreeItem({
+              id: "9999",
+              name: "Import from VirtualBox, Parallels, VMware ...",
+              vmName: "-",
+              icon: "add",
+              notCollapsed: true,
+            });
+            diskUpload.command = { command: "myDisks.upload", arguments: [diskUpload], title: "Open" };
+
+            disks_.push(diskUpload);
+            disks_ = [...disks_, ...disks.map((disk) => new DiskTreeItem(disk))];
+
+            return;
+          })
+          .catch((err) => {
+            vscode.window.showErrorMessage(err);
+            return [];
           });
-          diskUpload.command = { command: "myDisks.upload", arguments: [diskUpload], title: "Open" };
+      });
 
-          disks_.push(diskUpload);
-          disks_ = [...disks_, ...disks.map((disk) => new DiskTreeItem(disk))];
-
-          return disks_;
-        })
-        .catch((err) => {
-          vscode.window.showErrorMessage(err);
-          return [];
-        });
+      return [
+        {
+          id: "1000001",
+          loadingQemuImg: true,
+          iconPath: new (vscode.ThemeIcon as any)("gear~spin"),
+          label: "%",
+          description: "importing",
+          tooltip: "importing",
+          command: undefined,
+        },
+      ];
     }
 
     if (element.vmName) {

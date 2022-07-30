@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { Disk } from "./utils";
+import { Disk } from "./kymanoAdapter";
 
 export class DiskTreeItem extends vscode.TreeItem {
   vmName: string;
@@ -7,7 +7,7 @@ export class DiskTreeItem extends vscode.TreeItem {
   myConfigId?: number;
   diskId?: number;
   extension?: string;
-  loading: any;
+  waitingForSshConnection: any;
   constructor(public readonly disk: Disk) {
     super(disk.name);
 
@@ -40,7 +40,7 @@ export class DiskTreeItem extends vscode.TreeItem {
       };
     }
     if (disk.loading) {
-      this.loading = disk.loading;
+      this.waitingForSshConnection = disk.loading;
     }
   }
 }

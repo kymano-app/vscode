@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { VirtualMachine } from './utils';
+import { VirtualMachine } from './kymanoAdapter';
 
 export class VirtualMachineTreeItem extends vscode.TreeItem {
     constructor(public readonly vm: VirtualMachine) {

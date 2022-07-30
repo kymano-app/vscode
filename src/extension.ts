@@ -10,8 +10,9 @@ import {
   setIp,
   shiftGuestFsQueue,
   shiftMessagesQueue,
+  isFileExist,
 } from "kymano";
-import { mounted, shiftQemuImgConvertingQueue } from "kymano/dist/global";
+import { MessagesQueueStatus, mounted, pushMessagesQueue, shiftQemuImgConvertingQueue } from "kymano/dist/global";
 import * as vscode from "vscode";
 import { DiskTreeItem } from "./diskTreeitem";
 import { CantConvertDiskException } from "./Exceptions/CantConvertDiskException";
@@ -20,25 +21,11 @@ import { MyDisksProvider } from "./MyDisksProvider";
 import { runGuestFs } from "./services";
 import { SFtpExplorer } from "./sftpExplorer";
 import { SFtpService } from "./SFtpService";
-import {
-  isRunning,
-  poweOffAllVms,
-  powerOff,
-  saveState,
-  startNewWithGui,
-  startWithGui,
-  startWithoutGui,
-  stopAllVms,
-} from "./utils";
+import { KymanoAdapter } from "./kymanoAdapter";
 import { MyVirtualMachinesProvider, VirtualMachinesProvider } from "./vmsProvider";
 import { VirtualMachineTreeItem } from "./vmTreeitem";
 import path = require("path");
-
-const db = require("better-sqlite3")(getUserDataPath() + "/sqlite3.db", {
-  verbose: console.log,
-});
-const dataSource = new DataSource(db);
-const kymano = new Kymano(dataSource, new QemuCommands());
+const fsAsync = require("fs").promises;
 
 // (async function loop2() {
 // 	setTimeout(async function () {
@@ -105,6 +92,20 @@ const kymano = new Kymano(dataSource, new QemuCommands());
 })();
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const userDataPath = getUserDataPath();
+  console.log(`src/extension.ts:104 userDataPath`, userDataPath);
+  if (!isFileExist(userDataPath)) {
+    console.log(`src/extension.ts:104 CREATE`, userDataPath);
+    await fsAsync.mkdir(userDataPath, {
+      recursive: true,
+    });
+  }
+  const db = require("better-sqlite3")(getUserDataPath() + "/sqlite3.db", {
+    verbose: console.log,
+  });
+  const dataSource = new DataSource(db);
+  const kymano = new Kymano(dataSource, new QemuCommands());
+
   const rows = await dataSource.getTables();
   if (rows === 0) {
     await dataSource.createTables();
@@ -113,10 +114,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   await runGuestFs(kymano);
 
+  const kymanoAdapter = new KymanoAdapter(kymano, dataSource);
   const sftpService = new SFtpService("192.168.66.2");
-  const vmProvider = new VirtualMachinesProvider();
-  const myVmProvider = new MyVirtualMachinesProvider();
-  const myDisksProvider = new MyDisksProvider(sftpService);
+  const vmProvider = new VirtualMachinesProvider(kymanoAdapter);
+  const myVmProvider = new MyVirtualMachinesProvider(kymanoAdapter);
+  const myDisksProvider = new MyDisksProvider(sftpService, kymanoAdapter);
   vscode.window.registerTreeDataProvider("my-vb-machines", myVmProvider);
   vscode.window.registerTreeDataProvider("my-disks", myDisksProvider);
   vscode.window.createTreeView("vb-machines", {
@@ -203,24 +205,45 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       "kymano-extension.runMyVM",
       async (vmTreeItem?: VirtualMachineTreeItem): Promise<void> => {
         if (vmTreeItem) {
+          const { vm } = vmTreeItem;
+
           (async function loop() {
             setTimeout(async function () {
-              const command = shiftMessagesQueue();
-              console.log("command::::::", command);
-              if (command) {
-                vmTreeItem.iconPath = new (vscode.ThemeIcon as any)("loading~spin");
-                vmTreeItem.label = command + "%";
-                vmTreeItem.description = "Downloading system layer";
-                vmTreeItem.tooltip = "Downloading system layer";
-                myVmProvider.refresh(vmTreeItem);
+              const command = shiftMessagesQueue(vm.id);
+              console.log("command::::::::::::::", command);
+              if (command && command.status === MessagesQueueStatus.Finished) {
+                console.log(`src/extension.ts:214 return`);
+                //myVmProvider.refresh(vmTreeItem);
+                return;
+              }
+
+              if (command && command.status !== MessagesQueueStatus.Finished) {
+                console.log(`src/extension.ts:214 command`, command);
+                const newVmTreeItem = vmTreeItem;
+
+                newVmTreeItem.iconPath = new (vscode.ThemeIcon as any)("loading~spin");
+                newVmTreeItem.label = command.pct + "%";
+                // downloading qemu
+                // extracting qemu
+                // system, ... layers + myConfigId
+                // extracting system, ... layers + myConfigId
+                // vmTreeItem.description = "Downloading system layer";
+                newVmTreeItem.description = command.text;
+                newVmTreeItem.tooltip = command.text;
+                myVmProvider.refresh(newVmTreeItem);
               }
               loop();
-            }, 100);
+            }, 50);
           })();
 
-          const { vm } = vmTreeItem;
           try {
-            await startWithGui(vm.id);
+            await kymanoAdapter.startWithGui(vm.id);
+            pushMessagesQueue(vm.id, { status: MessagesQueueStatus.Finished });
+            vmTreeItem.label = vm.name;
+            vmTreeItem.description = undefined;
+            vmTreeItem.tooltip = vm.name;
+            vmTreeItem.iconPath = new (vscode.ThemeIcon as any)("vm");
+            myVmProvider.refresh(vmTreeItem);
             vscode.window.showInformationMessage(`My Virtual machine "${vm.name}" has been run successfully`);
           } catch (ex) {
             vscode.window.showErrorMessage(
@@ -237,7 +260,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const { vm } = vmTreeItem;
 
           try {
-            await startNewWithGui(vm.id);
+            await kymanoAdapter.startNewWithGui(vm.id);
             vscode.window.showInformationMessage(`Virtual machine "${vm.name}" has been run successfully`);
           } catch (ex) {
             vscode.window.showErrorMessage(
